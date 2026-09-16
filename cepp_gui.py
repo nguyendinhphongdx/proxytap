@@ -9,6 +9,8 @@ Chay:  python cepp_gui.py
 """
 
 import asyncio
+import os
+import subprocess
 import threading
 import queue
 import time
@@ -16,6 +18,52 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 DEFAULT_PORT = 8899
+
+SITES = ["https://www.facebook.com", "https://www.youtube.com", "https://www.tiktok.com"]
+
+BROWSER_PATHS = {
+    "chrome": [
+        r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+        r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+    ],
+    "edge": [
+        r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+        r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+    ],
+    "brave": [
+        r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe",
+    ],
+}
+
+
+def find_browser_exe(name: str):
+    for template in BROWSER_PATHS.get(name, []):
+        path = os.path.expandvars(template)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def launch_browser(name: str, port: int):
+    exe = find_browser_exe(name)
+    if not exe:
+        return None, f"Khong tim thay {name} da cai dat."
+    udd = os.path.expandvars(rf"%LOCALAPPDATA%\cepp_{name}")
+    args = [
+        exe,
+        f"--user-data-dir={udd}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        f"--proxy-server=http://127.0.0.1:{port}",
+        "--new-window",
+        *SITES,
+    ]
+    try:
+        subprocess.Popen(args)
+        return exe, None
+    except Exception as e:
+        return None, str(e)
 
 
 class ProxyCore:
@@ -162,10 +210,19 @@ class App(tk.Tk):
         self.stop_btn = ttk.Button(top, text="Stop", command=self._on_stop, state="disabled")
         self.stop_btn.pack(side="left", padx=(6, 16))
 
+        ttk.Label(top, text="Browser:").pack(side="left")
+        self.browser_var = tk.StringVar(value="chrome")
+        ttk.Combobox(top, textvariable=self.browser_var, values=["chrome", "edge", "brave"],
+                     width=8, state="readonly").pack(side="left", padx=(4, 6))
+        self.open_btn = ttk.Button(top, text="Mo trinh duyet", command=self._on_open_browser, state="disabled")
+        self.open_btn.pack(side="left")
+
+        row2 = ttk.Frame(self, padding=(10, 0))
+        row2.pack(fill="x")
         self.status_var = tk.StringVar(value="Stopped")
-        ttk.Label(top, textvariable=self.status_var, foreground="gray").pack(side="left")
+        ttk.Label(row2, textvariable=self.status_var, foreground="gray").pack(side="left")
         self.active_var = tk.StringVar(value="active: 0")
-        ttk.Label(top, textvariable=self.active_var).pack(side="right")
+        ttk.Label(row2, textvariable=self.active_var).pack(side="right")
 
         wl = ttk.LabelFrame(self, text="Gioi han domain (de trong = cho phep tat ca)", padding=8)
         wl.pack(fill="x", padx=10, pady=(0, 6))
@@ -209,11 +266,27 @@ class App(tk.Tk):
         self.core.start("127.0.0.1", port)
         self.start_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
+        self.open_btn.config(state="normal")
 
     def _on_stop(self):
         if self.core:
             self.core.stop()
         self.stop_btn.config(state="disabled")
+        self.open_btn.config(state="disabled")
+
+    def _on_open_browser(self):
+        try:
+            port = int(self.port_var.get())
+        except ValueError:
+            messagebox.showerror("Loi", "Port khong hop le")
+            return
+        name = self.browser_var.get()
+        exe, err = launch_browser(name, port)
+        if err:
+            self._append_log(f"[loi mo browser] {err}")
+            messagebox.showerror("Loi", err)
+        else:
+            self._append_log(f"[mo {name}] {exe}")
 
     def _on_close(self):
         if self.core:
