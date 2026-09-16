@@ -26,6 +26,7 @@ class ProxyCore:
         self.loop = None
         self.server = None
         self.thread = None
+        self.allowed_hosts = None  # None = cho phep tat ca; set() = whitelist
         self._active = 0
 
     def start(self, host: str, port: int):
@@ -35,6 +36,15 @@ class ProxyCore:
     def stop(self):
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self._shutdown)
+
+    def set_allowed_hosts(self, hosts):
+        self.allowed_hosts = hosts  # set of lowercase suffixes, or None
+
+    def _host_allowed(self, host: str) -> bool:
+        if self.allowed_hosts is None:
+            return True
+        host = host.lower()
+        return any(host == d or host.endswith("." + d) for d in self.allowed_hosts)
 
     def _run_loop(self, host, port):
         self.loop = asyncio.new_event_loop()
@@ -91,6 +101,12 @@ class ProxyCore:
 
             host, _, port_s = target.partition(":")
             port = int(port_s) if port_s else 443
+
+            if not self._host_allowed(host):
+                self.events.put(("blocked", f"{host}:{port}"))
+                cw.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                await cw.drain()
+                return
 
             try:
                 sr, sw = await asyncio.open_connection(host, port)
@@ -151,6 +167,16 @@ class App(tk.Tk):
         self.active_var = tk.StringVar(value="active: 0")
         ttk.Label(top, textvariable=self.active_var).pack(side="right")
 
+        wl = ttk.LabelFrame(self, text="Gioi han domain (de trong = cho phep tat ca)", padding=8)
+        wl.pack(fill="x", padx=10, pady=(0, 6))
+        self.wl_enabled = tk.BooleanVar(value=False)
+        ttk.Checkbutton(wl, text="Chi cho phep domain trong danh sach",
+                         variable=self.wl_enabled, command=self._apply_whitelist).pack(anchor="w")
+        self.wl_text = tk.Text(wl, height=3)
+        self.wl_text.insert("1.0", "facebook.com\nfbcdn.net\nyoutube.com\nytimg.com\ntiktok.com\ntiktokcdn.com")
+        self.wl_text.pack(fill="x", pady=(4, 4))
+        ttk.Button(wl, text="Ap dung", command=self._apply_whitelist).pack(anchor="e")
+
         logf = ttk.LabelFrame(self, text="Log ket noi", padding=6)
         logf.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.log = tk.Text(logf, state="disabled", wrap="none")
@@ -159,6 +185,17 @@ class App(tk.Tk):
         sb.pack(side="right", fill="y")
         self.log.configure(yscrollcommand=sb.set)
 
+    def _apply_whitelist(self):
+        if not self.core:
+            return
+        if self.wl_enabled.get():
+            hosts = {h.strip().lower() for h in self.wl_text.get("1.0", "end").splitlines() if h.strip()}
+            self.core.set_allowed_hosts(hosts)
+            self._append_log(f"[whitelist bat: {len(hosts)} domain]")
+        else:
+            self.core.set_allowed_hosts(None)
+            self._append_log("[whitelist tat: cho phep tat ca]")
+
     def _on_start(self):
         try:
             port = int(self.port_var.get())
@@ -166,6 +203,9 @@ class App(tk.Tk):
             messagebox.showerror("Loi", "Port khong hop le")
             return
         self.core = ProxyCore(self.events)
+        if self.wl_enabled.get():
+            hosts = {h.strip().lower() for h in self.wl_text.get("1.0", "end").splitlines() if h.strip()}
+            self.core.set_allowed_hosts(hosts)
         self.core.start("127.0.0.1", port)
         self.start_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
@@ -204,6 +244,8 @@ class App(tk.Tk):
                     messagebox.showerror("Loi proxy", payload)
                 elif kind == "log":
                     self._append_log(payload)
+                elif kind == "blocked":
+                    self._append_log(f"BLOCKED {payload}")
                 elif kind == "active":
                     self.active_var.set(f"active: {payload}")
         except queue.Empty:
