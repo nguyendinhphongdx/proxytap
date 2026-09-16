@@ -1,0 +1,15 @@
+# Byte-compiled / build artifacts
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+
+# Editor / tooling
+.claude/
+.vscode/
+
+# Binaries are distributed via GitHub Releases, not committed here.
+cepp_proxy.exe
+cepp_proxy_gui.exe
+cepp.cmd
