@@ -1,23 +1,57 @@
 """
-cepp_gui.py - Simple local CONNECT proxy.
+cepp_gui.py - Simple local CONNECT proxy with a Tkinter control UI.
 
 Chuc nang: mo mot HTTP CONNECT proxy tren 127.0.0.1:<port>, tunnel TCP
-tho toi dich duoc yeu cau (vd tu trinh duyet cau hinh proxy toi day).
+tho toi dich duoc trinh duyet yeu cau. Co UI de Start/Stop, doi cong,
+xem log ket noi.
 
-Chay:  python cepp_gui.py [port]
+Chay:  python cepp_gui.py
 """
 
 import asyncio
-import sys
+import threading
+import queue
+import time
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 DEFAULT_PORT = 8899
 
 
 class ProxyCore:
-    """Asyncio CONNECT-proxy: nhan CONNECT host:port, relay TCP tho 2 chieu."""
+    """Asyncio CONNECT-proxy chay tren thread rieng, bao cao su kien qua queue."""
 
-    def __init__(self):
+    def __init__(self, event_queue: queue.Queue):
+        self.events = event_queue
+        self.loop = None
         self.server = None
+        self.thread = None
+        self._active = 0
+
+    def start(self, host: str, port: int):
+        self.thread = threading.Thread(target=self._run_loop, args=(host, port), daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self._shutdown)
+
+    def _run_loop(self, host, port):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.loop.run_until_complete(self._main(host, port))
+        except Exception as e:
+            self.events.put(("error", str(e)))
+        finally:
+            self.loop.close()
+            self.events.put(("stopped", None))
+
+    def _shutdown(self):
+        if self.server:
+            self.server.close()
+        for task in asyncio.all_tasks(self.loop):
+            task.cancel()
 
     async def _pipe(self, reader, writer):
         try:
@@ -33,6 +67,9 @@ class ProxyCore:
             writer.close()
 
     async def _handle(self, cr, cw):
+        peer = cw.get_extra_info("peername")
+        self._active += 1
+        self.events.put(("active", self._active))
         try:
             line = await cr.readline()
             if not line:
@@ -57,11 +94,13 @@ class ProxyCore:
 
             try:
                 sr, sw = await asyncio.open_connection(host, port)
-            except Exception:
+            except Exception as e:
+                self.events.put(("log", f"502 {host}:{port} ({e})"))
                 cw.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
                 await cw.drain()
                 return
 
+            self.events.put(("log", f"OK  {host}:{port}  <- {peer}"))
             cw.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             await cw.drain()
             await asyncio.gather(self._pipe(cr, sw), self._pipe(sr, cw))
@@ -69,17 +108,108 @@ class ProxyCore:
             pass
         finally:
             cw.close()
+            self._active -= 1
+            self.events.put(("active", self._active))
 
-    async def main(self, host, port):
+    async def _main(self, host, port):
         self.server = await asyncio.start_server(self._handle, host, port)
-        print(f"CONNECT proxy listening on {host}:{port}", flush=True)
+        self.events.put(("started", f"{host}:{port}"))
         async with self.server:
             await self.server.serve_forever()
 
 
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("cepp proxy - control panel")
+        self.geometry("560x420")
+        self.resizable(True, True)
+
+        self.events = queue.Queue()
+        self.core = None
+        self.running = False
+
+        self._build_ui()
+        self.after(100, self._poll_events)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _build_ui(self):
+        top = ttk.Frame(self, padding=10)
+        top.pack(fill="x")
+
+        ttk.Label(top, text="Port:").pack(side="left")
+        self.port_var = tk.StringVar(value=str(DEFAULT_PORT))
+        ttk.Entry(top, textvariable=self.port_var, width=8).pack(side="left", padx=(4, 16))
+
+        self.start_btn = ttk.Button(top, text="Start", command=self._on_start)
+        self.start_btn.pack(side="left")
+        self.stop_btn = ttk.Button(top, text="Stop", command=self._on_stop, state="disabled")
+        self.stop_btn.pack(side="left", padx=(6, 16))
+
+        self.status_var = tk.StringVar(value="Stopped")
+        ttk.Label(top, textvariable=self.status_var, foreground="gray").pack(side="left")
+        self.active_var = tk.StringVar(value="active: 0")
+        ttk.Label(top, textvariable=self.active_var).pack(side="right")
+
+        logf = ttk.LabelFrame(self, text="Log ket noi", padding=6)
+        logf.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.log = tk.Text(logf, state="disabled", wrap="none")
+        self.log.pack(fill="both", expand=True, side="left")
+        sb = ttk.Scrollbar(logf, command=self.log.yview)
+        sb.pack(side="right", fill="y")
+        self.log.configure(yscrollcommand=sb.set)
+
+    def _on_start(self):
+        try:
+            port = int(self.port_var.get())
+        except ValueError:
+            messagebox.showerror("Loi", "Port khong hop le")
+            return
+        self.core = ProxyCore(self.events)
+        self.core.start("127.0.0.1", port)
+        self.start_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+
+    def _on_stop(self):
+        if self.core:
+            self.core.stop()
+        self.stop_btn.config(state="disabled")
+
+    def _on_close(self):
+        if self.core:
+            self.core.stop()
+        self.destroy()
+
+    def _append_log(self, text):
+        self.log.configure(state="normal")
+        ts = time.strftime("%H:%M:%S")
+        self.log.insert("end", f"[{ts}] {text}\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def _poll_events(self):
+        try:
+            while True:
+                kind, payload = self.events.get_nowait()
+                if kind == "started":
+                    self.status_var.set(f"Running on {payload}")
+                    self.running = True
+                elif kind == "stopped":
+                    self.status_var.set("Stopped")
+                    self.running = False
+                    self.start_btn.config(state="normal")
+                    self.stop_btn.config(state="disabled")
+                elif kind == "error":
+                    self._append_log(f"[loi] {payload}")
+                    messagebox.showerror("Loi proxy", payload)
+                elif kind == "log":
+                    self._append_log(payload)
+                elif kind == "active":
+                    self.active_var.set(f"active: {payload}")
+        except queue.Empty:
+            pass
+        self.after(100, self._poll_events)
+
+
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
-    try:
-        asyncio.run(ProxyCore().main("127.0.0.1", port))
-    except KeyboardInterrupt:
-        pass
+    App().mainloop()
