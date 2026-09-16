@@ -1,11 +1,11 @@
 """
 cepp_gui.py - Simple local CONNECT proxy with a Tkinter control UI.
 
-Chuc nang: mo mot HTTP CONNECT proxy tren 127.0.0.1:<port>, tunnel TCP
-tho toi dich duoc trinh duyet yeu cau. Co UI de Start/Stop, doi cong,
-xem log ket noi.
+Chức năng: mở một HTTP CONNECT proxy trên 127.0.0.1:<port>, tunnel TCP
+thô tới đích browser yêu cầu. Có UI để Start/Stop, đổi cổng, xem log
+kết nối, và (tùy chọn) giới hạn theo danh sách domain cho phép.
 
-Chay:  python cepp_gui.py
+Chạy:  python cepp_gui.py
 """
 
 import asyncio
@@ -23,7 +23,7 @@ DEFAULT_PORT = 8899
 
 SITES = ["https://www.facebook.com", "https://www.youtube.com", "https://www.tiktok.com"]
 
-# Duong dan cai dat mac dinh tren Windows / macOS.
+# Đường dẫn cài đặt mặc định trên Windows / macOS.
 WINDOWS_BROWSER_PATHS = {
     "chrome": [
         r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
@@ -45,7 +45,7 @@ MACOS_BROWSER_PATHS = {
     "brave": ["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
 }
 
-# Tren Linux, trinh duyet nam trong PATH nen do bang shutil.which theo ten lenh.
+# Trên Linux, trình duyệt nằm trong PATH nên dò bằng shutil.which theo tên lệnh.
 LINUX_BROWSER_BINS = {
     "chrome": ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"],
     "edge": ["microsoft-edge", "microsoft-edge-stable", "microsoft-edge-dev"],
@@ -63,7 +63,7 @@ def find_browser_exe(name: str):
         for path in MACOS_BROWSER_PATHS.get(name, []):
             if os.path.exists(path):
                 return path
-    else:  # Linux / cac Unix khac
+    else:  # Linux / các Unix khác
         for bin_name in LINUX_BROWSER_BINS.get(name, []):
             path = shutil.which(bin_name)
             if path:
@@ -72,7 +72,7 @@ def find_browser_exe(name: str):
 
 
 def user_data_dir(name: str) -> str:
-    """Thu muc profile rieng cho browser, tach biet profile chinh. Cross-platform."""
+    """Thư mục profile riêng cho browser, tách biệt profile chính. Cross-platform."""
     if sys.platform.startswith("win"):
         base = os.path.expandvars(r"%LOCALAPPDATA%")
     elif sys.platform == "darwin":
@@ -85,7 +85,7 @@ def user_data_dir(name: str) -> str:
 def launch_browser(name: str, port: int):
     exe = find_browser_exe(name)
     if not exe:
-        return None, f"Khong tim thay {name} da cai dat."
+        return None, f"Không tìm thấy {name} đã cài đặt."
     udd = user_data_dir(name)
     args = [
         exe,
@@ -104,14 +104,14 @@ def launch_browser(name: str, port: int):
 
 
 class ProxyCore:
-    """Asyncio CONNECT-proxy chay tren thread rieng, bao cao su kien qua queue."""
+    """Asyncio CONNECT-proxy chạy trên thread riêng, báo cáo sự kiện qua queue."""
 
     def __init__(self, event_queue: queue.Queue):
         self.events = event_queue
         self.loop = None
         self.server = None
         self.thread = None
-        self.allowed_hosts = None  # None = cho phep tat ca; set() = whitelist
+        self.allowed_hosts = None  # None = cho phép tất cả; set() = whitelist
         self._active = 0
 
     def start(self, host: str, port: int):
@@ -251,7 +251,7 @@ class App(tk.Tk):
         self.browser_var = tk.StringVar(value="chrome")
         ttk.Combobox(top, textvariable=self.browser_var, values=["chrome", "edge", "brave"],
                      width=8, state="readonly").pack(side="left", padx=(4, 6))
-        self.open_btn = ttk.Button(top, text="Mo trinh duyet", command=self._on_open_browser, state="disabled")
+        self.open_btn = ttk.Button(top, text="Mở trình duyệt", command=self._on_open_browser, state="disabled")
         self.open_btn.pack(side="left")
 
         row2 = ttk.Frame(self, padding=(10, 0))
@@ -261,17 +261,17 @@ class App(tk.Tk):
         self.active_var = tk.StringVar(value="active: 0")
         ttk.Label(row2, textvariable=self.active_var).pack(side="right")
 
-        wl = ttk.LabelFrame(self, text="Gioi han domain (de trong = cho phep tat ca)", padding=8)
+        wl = ttk.LabelFrame(self, text="Giới hạn domain (để trống = cho phép tất cả)", padding=8)
         wl.pack(fill="x", padx=10, pady=(0, 6))
         self.wl_enabled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(wl, text="Chi cho phep domain trong danh sach",
+        ttk.Checkbutton(wl, text="Chỉ cho phép domain trong danh sách",
                          variable=self.wl_enabled, command=self._apply_whitelist).pack(anchor="w")
         self.wl_text = tk.Text(wl, height=3)
         self.wl_text.insert("1.0", "facebook.com\nfbcdn.net\nyoutube.com\nytimg.com\ntiktok.com\ntiktokcdn.com")
         self.wl_text.pack(fill="x", pady=(4, 4))
-        ttk.Button(wl, text="Ap dung", command=self._apply_whitelist).pack(anchor="e")
+        ttk.Button(wl, text="Áp dụng", command=self._apply_whitelist).pack(anchor="e")
 
-        logf = ttk.LabelFrame(self, text="Log ket noi", padding=6)
+        logf = ttk.LabelFrame(self, text="Log kết nối", padding=6)
         logf.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.log = tk.Text(logf, state="disabled", wrap="none")
         self.log.pack(fill="both", expand=True, side="left")
@@ -285,16 +285,16 @@ class App(tk.Tk):
         if self.wl_enabled.get():
             hosts = {h.strip().lower() for h in self.wl_text.get("1.0", "end").splitlines() if h.strip()}
             self.core.set_allowed_hosts(hosts)
-            self._append_log(f"[whitelist bat: {len(hosts)} domain]")
+            self._append_log(f"[whitelist bật: {len(hosts)} domain]")
         else:
             self.core.set_allowed_hosts(None)
-            self._append_log("[whitelist tat: cho phep tat ca]")
+            self._append_log("[whitelist tắt: cho phép tất cả]")
 
     def _on_start(self):
         try:
             port = int(self.port_var.get())
         except ValueError:
-            messagebox.showerror("Loi", "Port khong hop le")
+            messagebox.showerror("Lỗi", "Port không hợp lệ")
             return
         self.core = ProxyCore(self.events)
         if self.wl_enabled.get():
@@ -315,15 +315,15 @@ class App(tk.Tk):
         try:
             port = int(self.port_var.get())
         except ValueError:
-            messagebox.showerror("Loi", "Port khong hop le")
+            messagebox.showerror("Lỗi", "Port không hợp lệ")
             return
         name = self.browser_var.get()
         exe, err = launch_browser(name, port)
         if err:
-            self._append_log(f"[loi mo browser] {err}")
-            messagebox.showerror("Loi", err)
+            self._append_log(f"[lỗi mở browser] {err}")
+            messagebox.showerror("Lỗi", err)
         else:
-            self._append_log(f"[mo {name}] {exe}")
+            self._append_log(f"[mở {name}] {exe}")
 
     def _on_close(self):
         if self.core:
@@ -350,8 +350,8 @@ class App(tk.Tk):
                     self.start_btn.config(state="normal")
                     self.stop_btn.config(state="disabled")
                 elif kind == "error":
-                    self._append_log(f"[loi] {payload}")
-                    messagebox.showerror("Loi proxy", payload)
+                    self._append_log(f"[lỗi] {payload}")
+                    messagebox.showerror("Lỗi proxy", payload)
                 elif kind == "log":
                     self._append_log(payload)
                 elif kind == "blocked":
