@@ -10,7 +10,9 @@ Chay:  python cepp_gui.py
 
 import asyncio
 import os
+import shutil
 import subprocess
+import sys
 import threading
 import queue
 import time
@@ -21,7 +23,8 @@ DEFAULT_PORT = 8899
 
 SITES = ["https://www.facebook.com", "https://www.youtube.com", "https://www.tiktok.com"]
 
-BROWSER_PATHS = {
+# Duong dan cai dat mac dinh tren Windows / macOS.
+WINDOWS_BROWSER_PATHS = {
     "chrome": [
         r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
         r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
@@ -36,20 +39,54 @@ BROWSER_PATHS = {
     ],
 }
 
+MACOS_BROWSER_PATHS = {
+    "chrome": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+    "edge": ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
+    "brave": ["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+}
+
+# Tren Linux, trinh duyet nam trong PATH nen do bang shutil.which theo ten lenh.
+LINUX_BROWSER_BINS = {
+    "chrome": ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"],
+    "edge": ["microsoft-edge", "microsoft-edge-stable", "microsoft-edge-dev"],
+    "brave": ["brave-browser", "brave-browser-stable", "brave"],
+}
+
 
 def find_browser_exe(name: str):
-    for template in BROWSER_PATHS.get(name, []):
-        path = os.path.expandvars(template)
-        if os.path.exists(path):
-            return path
+    if sys.platform.startswith("win"):
+        for template in WINDOWS_BROWSER_PATHS.get(name, []):
+            path = os.path.expandvars(template)
+            if os.path.exists(path):
+                return path
+    elif sys.platform == "darwin":
+        for path in MACOS_BROWSER_PATHS.get(name, []):
+            if os.path.exists(path):
+                return path
+    else:  # Linux / cac Unix khac
+        for bin_name in LINUX_BROWSER_BINS.get(name, []):
+            path = shutil.which(bin_name)
+            if path:
+                return path
     return None
+
+
+def user_data_dir(name: str) -> str:
+    """Thu muc profile rieng cho browser, tach biet profile chinh. Cross-platform."""
+    if sys.platform.startswith("win"):
+        base = os.path.expandvars(r"%LOCALAPPDATA%")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.path.expanduser("~/.config")
+    return os.path.join(base, f"cepp_{name}")
 
 
 def launch_browser(name: str, port: int):
     exe = find_browser_exe(name)
     if not exe:
         return None, f"Khong tim thay {name} da cai dat."
-    udd = os.path.expandvars(rf"%LOCALAPPDATA%\cepp_{name}")
+    udd = user_data_dir(name)
     args = [
         exe,
         f"--user-data-dir={udd}",
