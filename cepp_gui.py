@@ -18,7 +18,7 @@ import threading
 import queue
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 try:
     import paramiko
@@ -89,7 +89,8 @@ def user_data_dir(name: str) -> str:
     return os.path.join(base, f"cepp_{name}")
 
 
-def launch_browser(name: str, port: int):
+def launch_browser(name: str, proxy_url: str):
+    """proxy_url vd: 'http://127.0.0.1:8899' hoac 'socks5://127.0.0.1:1080'."""
     exe = find_browser_exe(name)
     if not exe:
         return None, f"Không tìm thấy {name} đã cài đặt."
@@ -99,7 +100,7 @@ def launch_browser(name: str, port: int):
         f"--user-data-dir={udd}",
         "--no-first-run",
         "--no-default-browser-check",
-        f"--proxy-server=http://127.0.0.1:{port}",
+        f"--proxy-server={proxy_url}",
         "--new-window",
         *SITES,
     ]
@@ -393,12 +394,14 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("cepp proxy - control panel")
-        self.geometry("560x420")
+        self.geometry("620x640")
         self.resizable(True, True)
 
         self.events = queue.Queue()
         self.core = None
         self.running = False
+        self.ssh_tunnel = None
+        self.ssh_running = False
 
         self._build_ui()
         self.after(100, self._poll_events)
@@ -421,8 +424,6 @@ class App(tk.Tk):
         self.browser_var = tk.StringVar(value="chrome")
         ttk.Combobox(top, textvariable=self.browser_var, values=["chrome", "edge", "brave"],
                      width=8, state="readonly").pack(side="left", padx=(4, 6))
-        self.open_btn = ttk.Button(top, text="Mở trình duyệt", command=self._on_open_browser, state="disabled")
-        self.open_btn.pack(side="left")
 
         row2 = ttk.Frame(self, padding=(10, 0))
         row2.pack(fill="x")
@@ -430,6 +431,16 @@ class App(tk.Tk):
         ttk.Label(row2, textvariable=self.status_var, foreground="gray").pack(side="left")
         self.active_var = tk.StringVar(value="active: 0")
         ttk.Label(row2, textvariable=self.active_var).pack(side="right")
+
+        # Chọn browser sẽ đi qua ngả nào rồi mở
+        openf = ttk.Frame(self, padding=(10, 6))
+        openf.pack(fill="x")
+        ttk.Label(openf, text="Mở trình duyệt qua:").pack(side="left")
+        self.route_var = tk.StringVar(value="local")
+        ttk.Radiobutton(openf, text="Local Proxy", variable=self.route_var, value="local").pack(side="left", padx=(6, 0))
+        ttk.Radiobutton(openf, text="VPS qua SSH (SOCKS5)", variable=self.route_var, value="ssh").pack(side="left", padx=(6, 0))
+        self.open_btn = ttk.Button(openf, text="Mở trình duyệt", command=self._on_open_browser, state="disabled")
+        self.open_btn.pack(side="right")
 
         wl = ttk.LabelFrame(self, text="Giới hạn domain (để trống = cho phép tất cả)", padding=8)
         wl.pack(fill="x", padx=10, pady=(0, 6))
@@ -440,6 +451,61 @@ class App(tk.Tk):
         self.wl_text.insert("1.0", "facebook.com\nfbcdn.net\nyoutube.com\nytimg.com\ntiktok.com\ntiktokcdn.com")
         self.wl_text.pack(fill="x", pady=(4, 4))
         ttk.Button(wl, text="Áp dụng", command=self._apply_whitelist).pack(anchor="e")
+
+        # SSH Tunnel (VPS) - dùng khi chặn ở tầng mạng (DNS/SNI), không phải theo tiến trình
+        ssh = ttk.LabelFrame(
+            self,
+            text="SSH Tunnel tới VPS (dùng khi chặn ở tầng mạng, Local Proxy không đủ)",
+            padding=8,
+        )
+        ssh.pack(fill="x", padx=10, pady=(0, 6))
+
+        if not HAVE_PARAMIKO:
+            ttk.Label(
+                ssh, foreground="red",
+                text="Chưa cài paramiko. Chạy:  pip install paramiko",
+            ).pack(anchor="w")
+
+        r1 = ttk.Frame(ssh)
+        r1.pack(fill="x", pady=2)
+        ttk.Label(r1, text="VPS host:", width=12).pack(side="left")
+        self.ssh_host_var = tk.StringVar()
+        ttk.Entry(r1, textvariable=self.ssh_host_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Label(r1, text="Port:").pack(side="left")
+        self.ssh_port_var = tk.StringVar(value="22")
+        ttk.Entry(r1, textvariable=self.ssh_port_var, width=6).pack(side="left", padx=(4, 0))
+
+        r2 = ttk.Frame(ssh)
+        r2.pack(fill="x", pady=2)
+        ttk.Label(r2, text="Username:", width=12).pack(side="left")
+        self.ssh_user_var = tk.StringVar()
+        ttk.Entry(r2, textvariable=self.ssh_user_var).pack(side="left", fill="x", expand=True)
+
+        r3 = ttk.Frame(ssh)
+        r3.pack(fill="x", pady=2)
+        ttk.Label(r3, text="Password:", width=12).pack(side="left")
+        self.ssh_pass_var = tk.StringVar()
+        ttk.Entry(r3, textvariable=self.ssh_pass_var, show="*").pack(side="left", fill="x", expand=True)
+
+        r4 = ttk.Frame(ssh)
+        r4.pack(fill="x", pady=2)
+        ttk.Label(r4, text="Hoặc key file:", width=12).pack(side="left")
+        self.ssh_key_var = tk.StringVar()
+        ttk.Entry(r4, textvariable=self.ssh_key_var).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(r4, text="Chọn...", command=self._on_browse_key).pack(side="left")
+
+        r5 = ttk.Frame(ssh)
+        r5.pack(fill="x", pady=2)
+        ttk.Label(r5, text="SOCKS port local:", width=16).pack(side="left")
+        self.socks_port_var = tk.StringVar(value="1080")
+        ttk.Entry(r5, textvariable=self.socks_port_var, width=8).pack(side="left", padx=(0, 16))
+        self.ssh_connect_btn = ttk.Button(r5, text="Connect", command=self._on_ssh_connect,
+                                           state=("normal" if HAVE_PARAMIKO else "disabled"))
+        self.ssh_connect_btn.pack(side="left")
+        self.ssh_disconnect_btn = ttk.Button(r5, text="Disconnect", command=self._on_ssh_disconnect, state="disabled")
+        self.ssh_disconnect_btn.pack(side="left", padx=(6, 0))
+        self.ssh_status_var = tk.StringVar(value="Chưa kết nối")
+        ttk.Label(r5, textvariable=self.ssh_status_var, foreground="gray").pack(side="right")
 
         logf = ttk.LabelFrame(self, text="Log kết nối", padding=6)
         logf.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -482,22 +548,76 @@ class App(tk.Tk):
         self.open_btn.config(state="disabled")
 
     def _on_open_browser(self):
-        try:
-            port = int(self.port_var.get())
-        except ValueError:
-            messagebox.showerror("Lỗi", "Port không hợp lệ")
-            return
+        route = self.route_var.get()
         name = self.browser_var.get()
-        exe, err = launch_browser(name, port)
+        if route == "local":
+            try:
+                port = int(self.port_var.get())
+            except ValueError:
+                messagebox.showerror("Lỗi", "Port không hợp lệ")
+                return
+            proxy_url = f"http://127.0.0.1:{port}"
+        else:
+            if not self.ssh_running:
+                messagebox.showerror("Lỗi", "Chưa Connect SSH Tunnel.")
+                return
+            try:
+                socks_port = int(self.socks_port_var.get())
+            except ValueError:
+                messagebox.showerror("Lỗi", "SOCKS port không hợp lệ")
+                return
+            proxy_url = f"socks5://127.0.0.1:{socks_port}"
+
+        exe, err = launch_browser(name, proxy_url)
         if err:
             self._append_log(f"[lỗi mở browser] {err}")
             messagebox.showerror("Lỗi", err)
         else:
-            self._append_log(f"[mở {name}] {exe}")
+            self._append_log(f"[mở {name} qua {proxy_url}] {exe}")
+
+    def _on_browse_key(self):
+        path = filedialog.askopenfilename(title="Chọn SSH private key")
+        if path:
+            self.ssh_key_var.set(path)
+
+    def _on_ssh_connect(self):
+        if not HAVE_PARAMIKO:
+            messagebox.showerror("Lỗi", "Chưa cài paramiko. Chạy: pip install paramiko")
+            return
+        host = self.ssh_host_var.get().strip()
+        if not host:
+            messagebox.showerror("Lỗi", "Nhập VPS host")
+            return
+        try:
+            ssh_port = int(self.ssh_port_var.get())
+            socks_port = int(self.socks_port_var.get())
+        except ValueError:
+            messagebox.showerror("Lỗi", "Port không hợp lệ")
+            return
+        username = self.ssh_user_var.get().strip()
+        password = self.ssh_pass_var.get() or None
+        key_path = self.ssh_key_var.get().strip() or None
+        if not username or (not password and not key_path):
+            messagebox.showerror("Lỗi", "Cần username và (password hoặc key file)")
+            return
+
+        self.ssh_tunnel = SSHSocksTunnel(self.events)
+        self.ssh_connect_btn.config(state="disabled")
+        self.ssh_status_var.set("Đang kết nối...")
+        self.ssh_tunnel.connect_and_serve(
+            host, ssh_port, username, password, key_path, None, "127.0.0.1", socks_port,
+        )
+
+    def _on_ssh_disconnect(self):
+        if self.ssh_tunnel:
+            self.ssh_tunnel.stop()
+        self.ssh_disconnect_btn.config(state="disabled")
 
     def _on_close(self):
         if self.core:
             self.core.stop()
+        if self.ssh_tunnel:
+            self.ssh_tunnel.stop()
         self.destroy()
 
     def _append_log(self, text):
@@ -528,6 +648,26 @@ class App(tk.Tk):
                     self._append_log(f"BLOCKED {payload}")
                 elif kind == "active":
                     self.active_var.set(f"active: {payload}")
+                elif kind == "ssh_connected":
+                    self.ssh_running = True
+                    self.ssh_status_var.set(f"Đang chạy SOCKS5 tại {payload}")
+                    self.ssh_disconnect_btn.config(state="normal")
+                    self.open_btn.config(state="normal")
+                    self._append_log(f"[SSH tunnel] đã kết nối, SOCKS5 tại {payload}")
+                elif kind == "ssh_error":
+                    self.ssh_status_var.set("Lỗi kết nối")
+                    self.ssh_connect_btn.config(state="normal")
+                    self._append_log(f"[SSH tunnel lỗi] {payload}")
+                    messagebox.showerror("Lỗi SSH Tunnel", payload)
+                elif kind == "ssh_stopped":
+                    self.ssh_running = False
+                    self.ssh_status_var.set("Chưa kết nối")
+                    self.ssh_connect_btn.config(state="normal" if HAVE_PARAMIKO else "disabled")
+                    self.ssh_disconnect_btn.config(state="disabled")
+                    if not self.running:
+                        self.open_btn.config(state="disabled")
+                elif kind == "ssh_active":
+                    self.active_var.set(f"SSH active: {payload}")
         except queue.Empty:
             pass
         self.after(100, self._poll_events)
