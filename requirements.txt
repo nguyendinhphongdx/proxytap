@@ -1,0 +1,3 @@
+# Only needed for the SSH Tunnel (VPS) feature.
+# The local CONNECT proxy and browser launcher use only the stdlib.
+paramiko>=3.0
