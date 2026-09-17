@@ -21,7 +21,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("cepp proxy - control panel")
-        self.geometry("640x760")
+        self.geometry("640x560")
         self.resizable(True, True)
 
         self.events = queue.Queue()
@@ -29,6 +29,7 @@ class App(tk.Tk):
         self.running = False
         self.ssh_tunnel = None
         self.ssh_running = False
+        self._ssh_dialog = None
 
         self._build_ui()
         self.after(100, self._poll_events)
@@ -111,60 +112,22 @@ class App(tk.Tk):
         self.wl_text.pack(fill="x", pady=(4, 4))
         ttk.Button(wl, text="Áp dụng", command=self._apply_whitelist).pack(anchor="e")
 
-        # SSH Tunnel (VPS) - dùng khi chặn ở tầng mạng (DNS/SNI), không phải theo tiến trình
-        ssh = ttk.LabelFrame(
-            self,
-            text="SSH Tunnel tới VPS (dùng khi chặn ở tầng mạng, Local Proxy không đủ)",
-            padding=8,
-        )
-        ssh.pack(fill="x", padx=10, pady=(0, 6))
-
-        if not HAVE_PARAMIKO:
-            ttk.Label(
-                ssh, foreground="red",
-                text="Chưa cài paramiko. Chạy:  pip install paramiko",
-            ).pack(anchor="w")
-
-        r1 = ttk.Frame(ssh)
-        r1.pack(fill="x", pady=2)
-        ttk.Label(r1, text="VPS host:", width=12).pack(side="left")
+        # SSH Tunnel (VPS) - dùng khi chặn ở tầng mạng (DNS/SNI), không phải
+        # theo tiến trình. Ít khi cần đến nên chỉ hiện 1 dòng gọn ở đây, cấu
+        # hình đầy đủ nằm trong dialog riêng mở khi bấm "Cấu hình...".
         self.ssh_host_var = tk.StringVar()
-        ttk.Entry(r1, textvariable=self.ssh_host_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ttk.Label(r1, text="Port:").pack(side="left")
         self.ssh_port_var = tk.StringVar(value="22")
-        ttk.Entry(r1, textvariable=self.ssh_port_var, width=6).pack(side="left", padx=(4, 0))
-
-        r2 = ttk.Frame(ssh)
-        r2.pack(fill="x", pady=2)
-        ttk.Label(r2, text="Username:", width=12).pack(side="left")
         self.ssh_user_var = tk.StringVar()
-        ttk.Entry(r2, textvariable=self.ssh_user_var).pack(side="left", fill="x", expand=True)
-
-        r3 = ttk.Frame(ssh)
-        r3.pack(fill="x", pady=2)
-        ttk.Label(r3, text="Password:", width=12).pack(side="left")
         self.ssh_pass_var = tk.StringVar()
-        ttk.Entry(r3, textvariable=self.ssh_pass_var, show="*").pack(side="left", fill="x", expand=True)
-
-        r4 = ttk.Frame(ssh)
-        r4.pack(fill="x", pady=2)
-        ttk.Label(r4, text="Hoặc key file:", width=12).pack(side="left")
         self.ssh_key_var = tk.StringVar()
-        ttk.Entry(r4, textvariable=self.ssh_key_var).pack(side="left", fill="x", expand=True, padx=(0, 6))
-        ttk.Button(r4, text="Chọn...", command=self._on_browse_key).pack(side="left")
-
-        r5 = ttk.Frame(ssh)
-        r5.pack(fill="x", pady=2)
-        ttk.Label(r5, text="SOCKS port local:", width=16).pack(side="left")
         self.socks_port_var = tk.StringVar(value="1080")
-        ttk.Entry(r5, textvariable=self.socks_port_var, width=8).pack(side="left", padx=(0, 16))
-        self.ssh_connect_btn = ttk.Button(r5, text="Connect", command=self._on_ssh_connect,
-                                           state=("normal" if HAVE_PARAMIKO else "disabled"))
-        self.ssh_connect_btn.pack(side="left")
-        self.ssh_disconnect_btn = ttk.Button(r5, text="Disconnect", command=self._on_ssh_disconnect, state="disabled")
-        self.ssh_disconnect_btn.pack(side="left", padx=(6, 0))
         self.ssh_status_var = tk.StringVar(value="Chưa kết nối")
-        ttk.Label(r5, textvariable=self.ssh_status_var, foreground="gray").pack(side="right")
+
+        sshf = ttk.Frame(self, padding=(10, 6))
+        sshf.pack(fill="x")
+        ttk.Label(sshf, text="SSH Tunnel (VPS):").pack(side="left")
+        ttk.Label(sshf, textvariable=self.ssh_status_var, foreground="gray").pack(side="left", padx=(6, 0))
+        ttk.Button(sshf, text="Cấu hình...", command=self._open_ssh_dialog).pack(side="right")
 
         logf = ttk.LabelFrame(self, text="Log kết nối", padding=6)
         logf.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -275,6 +238,71 @@ class App(tk.Tk):
             self._append_log(f"[dò profile] {name}: tìm thấy {len(profiles)} profile")
         else:
             self._append_log(f"[dò profile] {name}: không tìm thấy profile nào")
+
+    def _open_ssh_dialog(self):
+        """Mo dialog cau hinh SSH Tunnel. Chi build widget 1 lan (singleton),
+        lan sau chi deiconify+lift - tranh loi 'widget destroyed' vi
+        _poll_events con giu tham chieu ssh_connect_btn/ssh_disconnect_btn.
+        """
+        if self._ssh_dialog is not None and self._ssh_dialog.winfo_exists():
+            self._ssh_dialog.deiconify()
+            self._ssh_dialog.lift()
+            self._ssh_dialog.focus_force()
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Cấu hình SSH Tunnel (VPS)")
+        dlg.resizable(False, False)
+        dlg.protocol("WM_DELETE_WINDOW", dlg.withdraw)  # dong = an, khong huy
+        self._ssh_dialog = dlg
+
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        if not HAVE_PARAMIKO:
+            ttk.Label(
+                frm, foreground="red",
+                text="Chưa cài paramiko. Chạy:  pip install paramiko",
+            ).pack(anchor="w", pady=(0, 6))
+
+        r1 = ttk.Frame(frm)
+        r1.pack(fill="x", pady=2)
+        ttk.Label(r1, text="VPS host:", width=12).pack(side="left")
+        ttk.Entry(r1, textvariable=self.ssh_host_var, width=28).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Label(r1, text="Port:").pack(side="left")
+        ttk.Entry(r1, textvariable=self.ssh_port_var, width=6).pack(side="left", padx=(4, 0))
+
+        r2 = ttk.Frame(frm)
+        r2.pack(fill="x", pady=2)
+        ttk.Label(r2, text="Username:", width=12).pack(side="left")
+        ttk.Entry(r2, textvariable=self.ssh_user_var).pack(side="left", fill="x", expand=True)
+
+        r3 = ttk.Frame(frm)
+        r3.pack(fill="x", pady=2)
+        ttk.Label(r3, text="Password:", width=12).pack(side="left")
+        ttk.Entry(r3, textvariable=self.ssh_pass_var, show="*").pack(side="left", fill="x", expand=True)
+
+        r4 = ttk.Frame(frm)
+        r4.pack(fill="x", pady=2)
+        ttk.Label(r4, text="Hoặc key file:", width=12).pack(side="left")
+        ttk.Entry(r4, textvariable=self.ssh_key_var).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(r4, text="Chọn...", command=self._on_browse_key).pack(side="left")
+
+        r5 = ttk.Frame(frm)
+        r5.pack(fill="x", pady=(8, 2))
+        ttk.Label(r5, text="SOCKS port local:", width=16).pack(side="left")
+        ttk.Entry(r5, textvariable=self.socks_port_var, width=8).pack(side="left", padx=(0, 16))
+        self.ssh_connect_btn = ttk.Button(r5, text="Connect", command=self._on_ssh_connect,
+                                           state=("normal" if HAVE_PARAMIKO else "disabled"))
+        self.ssh_connect_btn.pack(side="left")
+        self.ssh_disconnect_btn = ttk.Button(r5, text="Disconnect", command=self._on_ssh_disconnect, state="disabled")
+        self.ssh_disconnect_btn.pack(side="left", padx=(6, 0))
+
+        r6 = ttk.Frame(frm)
+        r6.pack(fill="x", pady=(4, 0))
+        ttk.Label(r6, textvariable=self.ssh_status_var, foreground="gray").pack(side="left")
+
+        ttk.Button(frm, text="Đóng", command=dlg.withdraw).pack(anchor="e", pady=(10, 0))
 
     def _on_browse_key(self):
         path = filedialog.askopenfilename(title="Chọn SSH private key")
