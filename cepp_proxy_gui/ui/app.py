@@ -12,7 +12,7 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from ..browsers import all_browser_names, get_browser, launchable_browser_names
+from ..browsers import get_browser, launchable_browser_names
 from ..constants import DEFAULT_PORT, SITES
 from ..core import HAVE_PARAMIKO, ConnectProxy, SSHSocksTunnel
 
@@ -49,8 +49,10 @@ class App(tk.Tk):
 
         ttk.Label(top, text="Browser:").pack(side="left")
         self.browser_var = tk.StringVar(value="chrome")
-        ttk.Combobox(top, textvariable=self.browser_var, values=launchable_browser_names(),
-                     width=8, state="readonly").pack(side="left", padx=(4, 6))
+        browser_cb = ttk.Combobox(top, textvariable=self.browser_var, values=launchable_browser_names(),
+                                   width=8, state="readonly")
+        browser_cb.pack(side="left", padx=(4, 6))
+        browser_cb.bind("<<ComboboxSelected>>", lambda e: self._reset_profile_choice())
 
         row2 = ttk.Frame(self, padding=(10, 0))
         row2.pack(fill="x")
@@ -69,19 +71,36 @@ class App(tk.Tk):
         self.open_btn = ttk.Button(openf, text="Mở trình duyệt", command=self._on_open_browser, state="disabled")
         self.open_btn.pack(side="right")
 
-        # Do profile browser da co san tren may (chi hien thi, khong tu dung/copy)
-        pf = ttk.LabelFrame(self, text="Dò profile browser đã có sẵn (chỉ xem, chưa tự dùng)", padding=8)
+        # Profile browser: do (chi doc) + chon dung profile that de mo, thay vi
+        # luon dung profile cach ly. Chi ap dung cho browser ho tro launch
+        # (Chromium-based) - Firefox chua ho tro nen khong xuat hien o day.
+        pf = ttk.LabelFrame(self, text="Profile browser (theo Browser đã chọn ở trên)", padding=8)
         pf.pack(fill="x", padx=10, pady=(0, 6))
         pf_top = ttk.Frame(pf)
         pf_top.pack(fill="x")
-        ttk.Label(pf_top, text="Loại browser:").pack(side="left")
-        self.profile_browser_var = tk.StringVar(value="chrome")
-        ttk.Combobox(pf_top, textvariable=self.profile_browser_var,
-                     values=all_browser_names(),
-                     width=10, state="readonly").pack(side="left", padx=(4, 8))
         ttk.Button(pf_top, text="Dò profile", command=self._on_scan_profiles).pack(side="left")
         self.profile_list = tk.Listbox(pf, height=4)
-        self.profile_list.pack(fill="x", pady=(6, 0))
+        self.profile_list.pack(fill="x", pady=(6, 4))
+
+        pf_pick = ttk.Frame(pf)
+        pf_pick.pack(fill="x")
+        ttk.Label(pf_pick, text="Mở với profile:").pack(side="left")
+        self.ISOLATED_LABEL = "— Profile riêng của tool (mặc định, cách ly) —"
+        self.launch_profile_var = tk.StringVar(value=self.ISOLATED_LABEL)
+        self._profile_display_to_id = {self.ISOLATED_LABEL: None}
+        self.profile_pick_cb = ttk.Combobox(
+            pf_pick, textvariable=self.launch_profile_var,
+            values=[self.ISOLATED_LABEL], width=45, state="readonly",
+        )
+        self.profile_pick_cb.pack(side="left", fill="x", expand=True, padx=(6, 0))
+
+        ttk.Label(
+            pf,
+            text=("⚠ Nếu chọn profile thật: phải ĐÓNG hết cửa sổ browser đang dùng "
+                  "profile đó trước khi Mở trình duyệt — nếu không, Chrome/Edge/Brave "
+                  "dùng chung tiến trình theo profile và cờ proxy sẽ bị BỎ QUA."),
+            foreground="#b45309", wraplength=580, justify="left",
+        ).pack(anchor="w", pady=(4, 0))
 
         wl = ttk.LabelFrame(self, text="Giới hạn domain (để trống = cho phép tất cả)", padding=8)
         wl.pack(fill="x", padx=10, pady=(0, 6))
@@ -209,23 +228,42 @@ class App(tk.Tk):
                 return
             proxy_url = f"socks5://127.0.0.1:{socks_port}"
 
+        profile_id = self._profile_display_to_id.get(self.launch_profile_var.get())
+
         browser = get_browser(name)
-        exe, err = browser.launch(proxy_url, SITES)
+        exe, err = browser.launch(proxy_url, SITES, profile_id=profile_id)
         if err:
             self._append_log(f"[lỗi mở browser] {err}")
             messagebox.showerror("Lỗi", err)
+        elif profile_id:
+            self._append_log(f"[mở {name} qua {proxy_url}, profile thật '{profile_id}'] {exe}")
         else:
-            self._append_log(f"[mở {name} qua {proxy_url}] {exe}")
+            self._append_log(f"[mở {name} qua {proxy_url}, profile riêng của tool] {exe}")
+
+    def _reset_profile_choice(self):
+        """Khi doi Browser, xoa lua chon profile cu (khac browser -> khac id)."""
+        self.profile_list.delete(0, "end")
+        self._profile_display_to_id = {self.ISOLATED_LABEL: None}
+        self.profile_pick_cb.config(values=[self.ISOLATED_LABEL])
+        self.launch_profile_var.set(self.ISOLATED_LABEL)
 
     def _on_scan_profiles(self):
-        name = self.profile_browser_var.get()
+        name = self.browser_var.get()
         profiles = get_browser(name).list_profiles()
         self.profile_list.delete(0, "end")
+        self._profile_display_to_id = {self.ISOLATED_LABEL: None}
         if not profiles:
             self.profile_list.insert("end", f"(không tìm thấy profile {name} nào trên máy)")
+            self.profile_pick_cb.config(values=[self.ISOLATED_LABEL])
+            self.launch_profile_var.set(self.ISOLATED_LABEL)
             return
+        display_values = [self.ISOLATED_LABEL]
         for p in profiles:
             self.profile_list.insert("end", f"{p['name']}   —   {p['path']}")
+            display = f"{p['name']}  ({p['id']})"
+            display_values.append(display)
+            self._profile_display_to_id[display] = p["id"]
+        self.profile_pick_cb.config(values=display_values)
         self._append_log(f"[dò profile] {name}: tìm thấy {len(profiles)} profile")
 
     def _on_browse_key(self):

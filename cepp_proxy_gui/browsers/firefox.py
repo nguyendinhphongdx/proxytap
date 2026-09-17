@@ -84,7 +84,9 @@ class FirefoxBrowser(BrowserProvider):
             profiles.append({"id": section, "name": name, "path": full_path})
         return profiles
 
-    def launch(self, proxy_url: str, sites: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    def launch(
+        self, proxy_url: str, sites: List[str], profile_id: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         return None, (
             "Chưa hỗ trợ mở Firefox qua proxy tự động (Firefox cần cấu hình "
             "proxy trong profile, không nhận --proxy-server như Chromium). "

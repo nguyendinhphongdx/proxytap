@@ -95,13 +95,27 @@ class ChromiumBrowser(BrowserProvider):
         except Exception:
             return []
 
-    def launch(self, proxy_url: str, sites: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    def launch(
+        self, proxy_url: str, sites: List[str], profile_id: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         exe = self.find_executable()
         if not exe:
             return None, f"Không tìm thấy {self.name} đã cài đặt."
+
+        if profile_id:
+            root = self._real_user_data_root()
+            if not root:
+                return None, f"Không xác định được User Data root của {self.name}."
+            user_data_flag = f"--user-data-dir={root}"
+            profile_flags = [f"--profile-directory={profile_id}"]
+        else:
+            user_data_flag = f"--user-data-dir={self.user_data_dir()}"
+            profile_flags = []
+
         args = [
             exe,
-            f"--user-data-dir={self.user_data_dir()}",
+            user_data_flag,
+            *profile_flags,
             "--no-first-run",
             "--no-default-browser-check",
             f"--proxy-server={proxy_url}",

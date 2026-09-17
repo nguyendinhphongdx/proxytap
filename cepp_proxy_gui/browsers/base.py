@@ -28,8 +28,18 @@ class BrowserProvider(ABC):
         """Liet ke cac profile THAT da co san tren may (chi doc, khong sua)."""
 
     @abstractmethod
-    def launch(self, proxy_url: str, sites: List[str]) -> Tuple[Optional[str], Optional[str]]:
+    def launch(
+        self, proxy_url: str, sites: List[str], profile_id: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Mo browser voi proxy_url va danh sach site cho san.
+
+        profile_id: None (mac dinh) dung profile rieng cach ly cua tool
+        (user_data_dir()). Neu truyen 1 id lay tu list_profiles(), dung
+        THANG profile that do - luu y: Chromium dung chung 1 tien trinh
+        cho moi cua so cung user-data-dir, nen neu browser DANG MO SAN
+        voi profile nay, cua so moi se dung chung tien trinh dang chay
+        va co --proxy-server se BI BO QUA. Phai dong het cua so dang
+        dung profile do truoc khi goi launch() voi profile_id.
 
         Tra ve (duong_dan_exe, thong_bao_loi) - thong_bao_loi la None
         neu thanh cong.
