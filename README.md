@@ -12,11 +12,11 @@ can see and control exactly what it's doing.
 
 ## What it does
 
-1. **Local CONNECT proxy** (`ProxyCore`) — a tiny `asyncio` HTTP CONNECT
-   tunnel on `127.0.0.1:<port>`. It accepts `CONNECT host:port` from the
-   browser, opens a raw TCP connection to the real destination, and relays
-   bytes both ways. It does not decrypt, inspect, or modify TLS traffic —
-   it's a dumb pipe.
+1. **Local CONNECT proxy** (`core.ConnectProxy`) — a tiny `asyncio` HTTP
+   CONNECT tunnel on `127.0.0.1:<port>`. It accepts `CONNECT host:port` from
+   the browser, opens a raw TCP connection to the real destination, and
+   relays bytes both ways. It does not decrypt, inspect, or modify TLS
+   traffic — it's a dumb pipe.
 2. **Browser launcher** — detects an installed Chrome/Edge/Brave on
    Windows, macOS, or Linux, and launches it with `--proxy-server` pointing
    at the local proxy, using a separate `--user-data-dir` so it doesn't
@@ -24,12 +24,43 @@ can see and control exactly what it's doing.
 3. **Optional domain whitelist** — restrict the proxy to a list of allowed
    domains (with subdomain matching) instead of tunneling to anything the
    browser asks for.
-4. **SSH SOCKS5 tunnel** (`SSHSocksTunnel`) — an alternative transport for
-   a harder problem (see [Limitations](#limitations) below): connects to a
-   VPS you control over SSH (via `paramiko`) and runs a local SOCKS5 server
-   that forwards each connection through the encrypted SSH channel. Point
-   the browser at this instead of the local proxy when the block is at the
-   network layer rather than the process layer.
+4. **SSH SOCKS5 tunnel** (`core.SSHSocksTunnel`) — an alternative transport
+   for a harder problem (see [Limitations](#limitations) below): connects to
+   a VPS you control over SSH (via `paramiko`) and runs a local SOCKS5
+   server that forwards each connection through the encrypted SSH channel.
+   Point the browser at this instead of the local proxy when the block is
+   at the network layer rather than the process layer.
+5. **Profile detection (read-only)** — lists real, existing browser
+   profiles (Chrome/Edge/Brave via `Local State`, Firefox via
+   `profiles.ini`) by name and path, purely for your information. Nothing
+   is copied or auto-launched with them yet.
+
+## Project structure
+
+```
+cepp_gui.py                     thin entry point (python cepp_gui.py)
+cepp_proxy_gui/
+├── constants.py                shared constants (port, sites)
+├── core/                       "proxy provider" implementations
+│   ├── base.py                 ProxyProvider interface (start/stop contract)
+│   ├── connect_proxy.py        ConnectProxy — local HTTP CONNECT tunnel
+│   └── ssh_tunnel.py           SSHSocksTunnel — SOCKS5 over SSH (paramiko)
+├── browsers/                   "browser provider" implementations
+│   ├── base.py                 BrowserProvider interface
+│   ├── chromium.py             ChromiumBrowser (data-driven: Chrome/Edge/Brave)
+│   ├── firefox.py              FirefoxBrowser (profile detection only so far)
+│   └── registry.py             the one place that lists supported browsers
+└── ui/
+    └── app.py                  Tkinter App — talks only to the interfaces above
+```
+
+Both "provider" concepts follow the same shape (a small ABC in `base.py`
+per package): the UI calls `start()`/`stop()` on whichever `ProxyProvider`
+is active, and `find_executable()`/`user_data_dir()`/`list_profiles()`/
+`launch()` on whichever `BrowserProvider` is selected, without knowing or
+caring which concrete class it's talking to. Adding a new transport (e.g.
+WireGuard) or a new Chromium-based browser (e.g. Vivaldi) means adding one
+class or one registry entry — the UI code doesn't change.
 
 ## Requirements
 
@@ -74,7 +105,7 @@ required to run it. Pre-built Windows binaries are attached to
 ## How it works
 
 ```
-Browser  --[TCP to 127.0.0.1]-->  cepp_gui.py  --[TCP to the real destination]-->  Internet
+Browser  --[TCP to 127.0.0.1]-->  cepp_proxy_gui  --[TCP to the real destination]-->  Internet
 ```
 
 The browser only ever opens a connection to `127.0.0.1`. The connection
