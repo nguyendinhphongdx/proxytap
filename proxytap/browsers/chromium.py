@@ -62,7 +62,7 @@ class ChromiumBrowser(BrowserProvider):
             base = os.path.expanduser("~/Library/Application Support")
         else:
             base = os.path.expanduser("~/.config")
-        return os.path.join(base, f"cepp_{self.name}")
+        return os.path.join(base, f"proxytap_{self.name}")
 
     def _real_user_data_root(self) -> Optional[str]:
         """Thư mục 'User Data' thật của browser (khác user_data_dir() ở trên)."""

@@ -11,5 +11,5 @@ dist/
 
 # Binaries are distributed via GitHub Releases, not committed here.
 cepp_proxy.exe
-cepp_proxy_gui.exe
+proxytap.exe
 cepp.cmd

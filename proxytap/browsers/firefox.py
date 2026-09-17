@@ -51,7 +51,7 @@ class FirefoxBrowser(BrowserProvider):
             base = os.path.expanduser("~/Library/Application Support")
         else:
             base = os.path.expanduser("~/.config")
-        return os.path.join(base, "cepp_firefox")
+        return os.path.join(base, "proxytap_firefox")
 
     @staticmethod
     def _profiles_ini() -> str:

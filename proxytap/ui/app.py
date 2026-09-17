@@ -23,7 +23,7 @@ from ..core import HAVE_PARAMIKO, ConnectProxy, SSHSocksTunnel
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cepp proxy - control panel")
+        self.title("proxytap - control panel")
         self.geometry("640x680")
         self.resizable(True, True)
 

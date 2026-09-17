@@ -1,4 +1,4 @@
-# cepp-proxy-gui
+# proxytap
 
 A small, self-contained local proxy with a Tkinter control panel. It exists
 to solve one specific problem: **on some machines, a browser's outbound
@@ -6,9 +6,9 @@ network connections are blocked by process identity** (a filtering tool or
 device policy that keys off `chrome.exe`/`msedge.exe` specifically), while a
 different, unmonitored process making the exact same connection is not.
 
-This tool runs that "different process" as a small, auditable, single-file
-Python script instead of an opaque pre-built binary, and adds a GUI so you
-can see and control exactly what it's doing.
+This tool runs that "different process" as a small, auditable Python
+package instead of an opaque pre-built binary, and adds a GUI so you can
+see and control exactly what it's doing.
 
 ## What it does
 
@@ -29,18 +29,24 @@ can see and control exactly what it's doing.
    a VPS you control over SSH (via `paramiko`) and runs a local SOCKS5
    server that forwards each connection through the encrypted SSH channel.
    Point the browser at this instead of the local proxy when the block is
-   at the network layer rather than the process layer.
-5. **Profile detection (read-only)** — lists real, existing browser
-   profiles (Chrome/Edge/Brave via `Local State`, Firefox via
-   `profiles.ini`) by name and path, purely for your information. Nothing
-   is copied or auto-launched with them yet.
+   at the network layer rather than the process layer. Configured from its
+   own dialog to keep it out of the way when you're not using it.
+5. **Profile detection + reuse** — lists real, existing Chrome/Edge/Brave
+   profiles (via `Local State`) by name and path, and can launch directly
+   into one of them (`--profile-directory`) instead of the tool's isolated
+   profile, so an already-logged-in session (Facebook/YouTube/etc.) works
+   immediately with no re-login. Firefox profile detection (via
+   `profiles.ini`) is implemented but not yet wired into launching.
+6. **Persistent log** — every connection/event line is written to a log
+   file in addition to the on-screen log, so history survives closing the
+   app.
 
 ## Project structure
 
 ```
-cepp_gui.py                     thin entry point (python cepp_gui.py)
-cepp_proxy_gui/
-├── constants.py                shared constants (port, sites)
+run.py                          thin entry point (python run.py)
+proxytap/
+├── constants.py                shared constants (port, sites, log path)
 ├── core/                       "proxy provider" implementations
 │   ├── base.py                 ProxyProvider interface (start/stop contract)
 │   ├── connect_proxy.py        ConnectProxy — local HTTP CONNECT tunnel
@@ -75,27 +81,36 @@ class or one registry entry — the UI code doesn't change.
 ## Usage
 
 ```bash
-python cepp_gui.py
+python run.py
+# equivalent: python -m proxytap
 ```
 
 1. Set a port (default `8899`) and click **Start**.
-2. Pick a browser and click **Mở trình duyệt** (Open browser) — it launches
-   with the proxy configured and a few sites pre-opened.
-3. Optionally enable the domain whitelist to restrict what the proxy will
+2. Pick a browser. Optionally click **Dò profile** and select a real,
+   already-logged-in profile from the list instead of the isolated default
+   — if you do, close any window already using that profile first (see the
+   warning in the UI: Chromium reuses one process per profile, so an
+   already-running window would silently ignore the proxy flag).
+3. Click **Mở trình duyệt** — it launches with the proxy configured and a
+   few sites pre-opened.
+4. Optionally enable the domain whitelist to restrict what the proxy will
    tunnel to.
+
+Connection events are logged both in the UI and to a file (path shown
+above the log view, with a shortcut button to open its folder).
 
 ### SSH Tunnel mode
 
-If the local proxy doesn't help (see below), fill in your VPS's host,
-port, username, and password or private key, then click **Connect**. Once
-connected, switch the "Mở trình duyệt qua" radio button to **VPS qua SSH
-(SOCKS5)** before opening the browser.
+Click **Cấu hình...** next to "SSH Tunnel (VPS)" to open its dialog, fill
+in your VPS's host, port, username, and password or private key, then
+click **Connect**. Once connected, switch the "Mở trình duyệt qua" radio
+button to **VPS qua SSH (SOCKS5)** before opening the browser.
 
 ## Building a standalone executable
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --noconsole --name cepp_proxy_gui cepp_gui.py
+pyinstaller --onefile --noconsole --name proxytap run.py
 ```
 
 This produces a single executable in `dist/` — no Python installation
@@ -105,16 +120,16 @@ required to run it. Pre-built Windows binaries are attached to
 ## How it works
 
 ```
-Browser  --[TCP to 127.0.0.1]-->  cepp_proxy_gui  --[TCP to the real destination]-->  Internet
+Browser  --[TCP to 127.0.0.1]-->  proxytap  --[TCP to the real destination]-->  Internet
 ```
 
 The browser only ever opens a connection to `127.0.0.1`. The connection
-that actually reaches the internet is opened by this script's own process,
+that actually reaches the internet is opened by this tool's own process,
 not the browser's. If a filter on your machine blocks outbound connections
 *by process identity* (rather than by inspecting the traffic itself), it
-sees the browser only talking to localhost and this script talking to the
-outside world — and if it has no rule for this script, the connection goes
-through.
+sees the browser only talking to localhost and this tool talking to the
+outside world — and if it has no rule for this process, the connection
+goes through.
 
 ## Limitations
 

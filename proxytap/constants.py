@@ -16,9 +16,9 @@ def log_dir() -> str:
         base = os.path.expanduser("~/Library/Application Support")
     else:
         base = os.path.expanduser("~/.local/share")
-    d = os.path.join(base, "cepp_proxy_gui")
+    d = os.path.join(base, "proxytap")
     os.makedirs(d, exist_ok=True)
     return d
 
 
-LOG_FILE = os.path.join(log_dir(), "cepp_proxy_gui.log")
+LOG_FILE = os.path.join(log_dir(), "proxytap.log")

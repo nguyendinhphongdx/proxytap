@@ -1,4 +1,4 @@
-"""Cho phep chay: python -m cepp_proxy_gui"""
+"""Cho phep chay: python -m proxytap"""
 
 from .ui.app import App
 
