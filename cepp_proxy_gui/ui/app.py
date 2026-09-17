@@ -7,13 +7,16 @@ ChromiumBrowser/FirefoxBrowser lam viec ben trong the nao. Muon them
 core/__init__.py, KHONG can dung toi file nay.
 """
 
+import os
 import queue
+import subprocess
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from ..browsers import get_browser, launchable_browser_names
-from ..constants import DEFAULT_PORT, SITES
+from ..constants import DEFAULT_PORT, LOG_FILE, SITES
 from ..core import HAVE_PARAMIKO, ConnectProxy, SSHSocksTunnel
 
 
@@ -21,7 +24,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("cepp proxy - control panel")
-        self.geometry("640x560")
+        self.geometry("640x680")
         self.resizable(True, True)
 
         self.events = queue.Queue()
@@ -131,7 +134,11 @@ class App(tk.Tk):
 
         logf = ttk.LabelFrame(self, text="Log kết nối", padding=6)
         logf.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.log = tk.Text(logf, state="disabled", wrap="none")
+        logf_top = ttk.Frame(logf)
+        logf_top.pack(fill="x", pady=(0, 4))
+        ttk.Label(logf_top, text=f"Lưu tại: {LOG_FILE}", foreground="gray").pack(side="left")
+        ttk.Button(logf_top, text="Mở thư mục log", command=self._open_log_folder).pack(side="right")
+        self.log = tk.Text(logf, state="disabled", wrap="none", height=14)
         self.log.pack(fill="both", expand=True, side="left")
         sb = ttk.Scrollbar(logf, command=self.log.yview)
         sb.pack(side="right", fill="y")
@@ -350,11 +357,31 @@ class App(tk.Tk):
         self.destroy()
 
     def _append_log(self, text):
-        self.log.configure(state="normal")
         ts = time.strftime("%H:%M:%S")
-        self.log.insert("end", f"[{ts}] {text}\n")
+        line = f"[{ts}] {text}"
+
+        self.log.configure(state="normal")
+        self.log.insert("end", line + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
+
+    def _open_log_folder(self):
+        folder = os.path.dirname(LOG_FILE)
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(folder)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không mở được thư mục log: {e}")
 
     def _poll_events(self):
         try:
