@@ -71,28 +71,27 @@ class App(tk.Tk):
         self.open_btn = ttk.Button(openf, text="Mở trình duyệt", command=self._on_open_browser, state="disabled")
         self.open_btn.pack(side="right")
 
-        # Profile browser: do (chi doc) + chon dung profile that de mo, thay vi
-        # luon dung profile cach ly. Chi ap dung cho browser ho tro launch
-        # (Chromium-based) - Firefox chua ho tro nen khong xuat hien o day.
-        pf = ttk.LabelFrame(self, text="Profile browser (theo Browser đã chọn ở trên)", padding=8)
-        pf.pack(fill="x", padx=10, pady=(0, 6))
-        pf_top = ttk.Frame(pf)
-        pf_top.pack(fill="x")
-        ttk.Button(pf_top, text="Dò profile", command=self._on_scan_profiles).pack(side="left")
-        self.profile_list = tk.Listbox(pf, height=4)
-        self.profile_list.pack(fill="x", pady=(6, 4))
-
-        pf_pick = ttk.Frame(pf)
-        pf_pick.pack(fill="x")
-        ttk.Label(pf_pick, text="Mở với profile:").pack(side="left")
-        self.ISOLATED_LABEL = "— Profile riêng của tool (mặc định, cách ly) —"
-        self.launch_profile_var = tk.StringVar(value=self.ISOLATED_LABEL)
-        self._profile_display_to_id = {self.ISOLATED_LABEL: None}
-        self.profile_pick_cb = ttk.Combobox(
-            pf_pick, textvariable=self.launch_profile_var,
-            values=[self.ISOLATED_LABEL], width=45, state="readonly",
+        # Profile browser: do (chi doc) + click thang vao dong trong danh sach
+        # de chon profile do lam profile mo qua proxy. Chi ap dung cho browser
+        # ho tro launch (Chromium-based) - Firefox chua ho tro nen khong xuat
+        # hien o day. Dong dau tien luon la "profile rieng cua tool" (mac dinh).
+        pf = ttk.LabelFrame(
+            self, text="Profile browser (theo Browser đã chọn ở trên) — click 1 dòng để chọn dùng",
+            padding=8,
         )
-        self.profile_pick_cb.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        pf.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Button(pf, text="Dò profile", command=self._on_scan_profiles).pack(anchor="w")
+
+        self.ISOLATED_LABEL = "— Profile riêng của tool (mặc định, cách ly) —"
+        self._profile_ids = [None]
+        self.profile_list = tk.Listbox(pf, height=4, exportselection=False)
+        self.profile_list.pack(fill="x", pady=(6, 0))
+        self.profile_list.insert("end", self.ISOLATED_LABEL)
+        self.profile_list.selection_set(0)
+        self.profile_list.bind("<<ListboxSelect>>", self._on_pick_profile)
+
+        self.profile_choice_var = tk.StringVar(value=f"Đang dùng: {self.ISOLATED_LABEL}")
+        ttk.Label(pf, textvariable=self.profile_choice_var, foreground="gray").pack(anchor="w", pady=(4, 0))
 
         ttk.Label(
             pf,
@@ -228,7 +227,7 @@ class App(tk.Tk):
                 return
             proxy_url = f"socks5://127.0.0.1:{socks_port}"
 
-        profile_id = self._profile_display_to_id.get(self.launch_profile_var.get())
+        profile_id = self._selected_profile_id()
 
         browser = get_browser(name)
         exe, err = browser.launch(proxy_url, SITES, profile_id=profile_id)
@@ -240,31 +239,42 @@ class App(tk.Tk):
         else:
             self._append_log(f"[mở {name} qua {proxy_url}, profile riêng của tool] {exe}")
 
+    def _selected_profile_id(self):
+        sel = self.profile_list.curselection()
+        if not sel or sel[0] >= len(self._profile_ids):
+            return None
+        return self._profile_ids[sel[0]]
+
+    def _on_pick_profile(self, _event=None):
+        sel = self.profile_list.curselection()
+        if not sel:
+            return
+        label = self.profile_list.get(sel[0])
+        self.profile_choice_var.set(f"Đang dùng: {label}")
+
     def _reset_profile_choice(self):
-        """Khi doi Browser, xoa lua chon profile cu (khac browser -> khac id)."""
+        """Khi đổi Browser, xóa danh sách profile cũ (khác browser -> khác id)."""
         self.profile_list.delete(0, "end")
-        self._profile_display_to_id = {self.ISOLATED_LABEL: None}
-        self.profile_pick_cb.config(values=[self.ISOLATED_LABEL])
-        self.launch_profile_var.set(self.ISOLATED_LABEL)
+        self._profile_ids = [None]
+        self.profile_list.insert("end", self.ISOLATED_LABEL)
+        self.profile_list.selection_set(0)
+        self.profile_choice_var.set(f"Đang dùng: {self.ISOLATED_LABEL}")
 
     def _on_scan_profiles(self):
         name = self.browser_var.get()
         profiles = get_browser(name).list_profiles()
         self.profile_list.delete(0, "end")
-        self._profile_display_to_id = {self.ISOLATED_LABEL: None}
-        if not profiles:
-            self.profile_list.insert("end", f"(không tìm thấy profile {name} nào trên máy)")
-            self.profile_pick_cb.config(values=[self.ISOLATED_LABEL])
-            self.launch_profile_var.set(self.ISOLATED_LABEL)
-            return
-        display_values = [self.ISOLATED_LABEL]
+        self._profile_ids = [None]
+        self.profile_list.insert("end", self.ISOLATED_LABEL)
         for p in profiles:
             self.profile_list.insert("end", f"{p['name']}   —   {p['path']}")
-            display = f"{p['name']}  ({p['id']})"
-            display_values.append(display)
-            self._profile_display_to_id[display] = p["id"]
-        self.profile_pick_cb.config(values=display_values)
-        self._append_log(f"[dò profile] {name}: tìm thấy {len(profiles)} profile")
+            self._profile_ids.append(p["id"])
+        self.profile_list.selection_set(0)
+        self.profile_choice_var.set(f"Đang dùng: {self.ISOLATED_LABEL}")
+        if profiles:
+            self._append_log(f"[dò profile] {name}: tìm thấy {len(profiles)} profile")
+        else:
+            self._append_log(f"[dò profile] {name}: không tìm thấy profile nào")
 
     def _on_browse_key(self):
         path = filedialog.askopenfilename(title="Chọn SSH private key")
