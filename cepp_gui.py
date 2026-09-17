@@ -9,6 +9,8 @@ Chạy:  python cepp_gui.py
 """
 
 import asyncio
+import configparser
+import json
 import os
 import shutil
 import socket
@@ -44,12 +46,17 @@ WINDOWS_BROWSER_PATHS = {
         r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe",
         r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe",
     ],
+    "firefox": [
+        r"%ProgramFiles%\Mozilla Firefox\firefox.exe",
+        r"%ProgramFiles(x86)%\Mozilla Firefox\firefox.exe",
+    ],
 }
 
 MACOS_BROWSER_PATHS = {
     "chrome": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
     "edge": ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
     "brave": ["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+    "firefox": ["/Applications/Firefox.app/Contents/MacOS/firefox"],
 }
 
 # Trên Linux, trình duyệt nằm trong PATH nên dò bằng shutil.which theo tên lệnh.
@@ -57,6 +64,7 @@ LINUX_BROWSER_BINS = {
     "chrome": ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"],
     "edge": ["microsoft-edge", "microsoft-edge-stable", "microsoft-edge-dev"],
     "brave": ["brave-browser", "brave-browser-stable", "brave"],
+    "firefox": ["firefox", "firefox-esr"],
 }
 
 
@@ -109,6 +117,101 @@ def launch_browser(name: str, proxy_url: str):
         return exe, None
     except Exception as e:
         return None, str(e)
+
+
+# ---- Do profile browser da co san (chi doc, khong copy/sua gi) ----
+
+def _chromium_user_data_root(name: str):
+    """Thu muc 'User Data' that cua browser (khac voi user_data_dir() rieng cua tool)."""
+    win_sub = {
+        "chrome": r"Google\Chrome\User Data",
+        "edge": r"Microsoft\Edge\User Data",
+        "brave": r"BraveSoftware\Brave-Browser\User Data",
+    }
+    mac_sub = {
+        "chrome": "Google/Chrome",
+        "edge": "Microsoft Edge",
+        "brave": "BraveSoftware/Brave-Browser",
+    }
+    linux_sub = {
+        "chrome": "google-chrome",
+        "edge": "microsoft-edge",
+        "brave": "BraveSoftware/Brave-Browser",
+    }
+    if sys.platform.startswith("win"):
+        base, sub = os.path.expandvars(r"%LOCALAPPDATA%"), win_sub.get(name)
+    elif sys.platform == "darwin":
+        base, sub = os.path.expanduser("~/Library/Application Support"), mac_sub.get(name)
+    else:
+        base, sub = os.path.expanduser("~/.config"), linux_sub.get(name)
+    if not sub:
+        return None
+    return os.path.join(base, sub)
+
+
+def list_chromium_profiles(name: str):
+    """Doc 'Local State' (JSON) de liet ke cac profile that cua Chrome/Edge/Brave."""
+    root = _chromium_user_data_root(name)
+    if not root:
+        return []
+    local_state_path = os.path.join(root, "Local State")
+    if not os.path.exists(local_state_path):
+        return []
+    try:
+        with open(local_state_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        info_cache = data.get("profile", {}).get("info_cache", {})
+        return [
+            {"id": folder, "name": meta.get("name", folder), "path": os.path.join(root, folder)}
+            for folder, meta in info_cache.items()
+        ]
+    except Exception:
+        return []
+
+
+def _firefox_profiles_ini():
+    if sys.platform.startswith("win"):
+        return os.path.expandvars(r"%APPDATA%\Mozilla\Firefox\profiles.ini")
+    elif sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/Firefox/profiles.ini")
+    else:
+        return os.path.expanduser("~/.mozilla/firefox/profiles.ini")
+
+
+def list_firefox_profiles():
+    """Doc profiles.ini de liet ke cac profile Firefox da co."""
+    ini_path = _firefox_profiles_ini()
+    if not os.path.exists(ini_path):
+        return []
+    config = configparser.ConfigParser()
+    try:
+        config.read(ini_path, encoding="utf-8")
+    except Exception:
+        return []
+    base_dir = os.path.dirname(ini_path)
+    profiles = []
+    for section in config.sections():
+        if not section.startswith("Profile") or not config.has_option(section, "Path"):
+            continue
+        path = config.get(section, "Path")
+        is_relative = config.getboolean(section, "IsRelative", fallback=True)
+        full_path = os.path.join(base_dir, path) if is_relative else path
+        name = config.get(section, "Name", fallback=path)
+        profiles.append({"id": section, "name": name, "path": full_path})
+    return profiles
+
+
+def list_browser_profiles(name: str):
+    """Tra ve danh sach profile that su da co tren may cho 1 loai browser.
+
+    Chi doc thong tin (ten profile, duong dan) - khong copy, khong sua,
+    khong tu dong dung profile nay de launch.
+    """
+    if name == "firefox":
+        return list_firefox_profiles()
+    if name in ("chrome", "edge", "brave"):
+        return list_chromium_profiles(name)
+    return []
 
 
 class ProxyCore:
@@ -394,7 +497,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("cepp proxy - control panel")
-        self.geometry("620x640")
+        self.geometry("640x760")
         self.resizable(True, True)
 
         self.events = queue.Queue()
@@ -441,6 +544,20 @@ class App(tk.Tk):
         ttk.Radiobutton(openf, text="VPS qua SSH (SOCKS5)", variable=self.route_var, value="ssh").pack(side="left", padx=(6, 0))
         self.open_btn = ttk.Button(openf, text="Mở trình duyệt", command=self._on_open_browser, state="disabled")
         self.open_btn.pack(side="right")
+
+        # Do profile browser da co san tren may (chi hien thi, khong tu dung/copy)
+        pf = ttk.LabelFrame(self, text="Dò profile browser đã có sẵn (chỉ xem, chưa tự dùng)", padding=8)
+        pf.pack(fill="x", padx=10, pady=(0, 6))
+        pf_top = ttk.Frame(pf)
+        pf_top.pack(fill="x")
+        ttk.Label(pf_top, text="Loại browser:").pack(side="left")
+        self.profile_browser_var = tk.StringVar(value="chrome")
+        ttk.Combobox(pf_top, textvariable=self.profile_browser_var,
+                     values=["chrome", "edge", "brave", "firefox"],
+                     width=10, state="readonly").pack(side="left", padx=(4, 8))
+        ttk.Button(pf_top, text="Dò profile", command=self._on_scan_profiles).pack(side="left")
+        self.profile_list = tk.Listbox(pf, height=4)
+        self.profile_list.pack(fill="x", pady=(6, 0))
 
         wl = ttk.LabelFrame(self, text="Giới hạn domain (để trống = cho phép tất cả)", padding=8)
         wl.pack(fill="x", padx=10, pady=(0, 6))
@@ -574,6 +691,17 @@ class App(tk.Tk):
             messagebox.showerror("Lỗi", err)
         else:
             self._append_log(f"[mở {name} qua {proxy_url}] {exe}")
+
+    def _on_scan_profiles(self):
+        name = self.profile_browser_var.get()
+        profiles = list_browser_profiles(name)
+        self.profile_list.delete(0, "end")
+        if not profiles:
+            self.profile_list.insert("end", f"(không tìm thấy profile {name} nào trên máy)")
+            return
+        for p in profiles:
+            self.profile_list.insert("end", f"{p['name']}   —   {p['path']}")
+        self._append_log(f"[dò profile] {name}: tìm thấy {len(profiles)} profile")
 
     def _on_browse_key(self):
         path = filedialog.askopenfilename(title="Chọn SSH private key")
